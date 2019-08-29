@@ -132,7 +132,7 @@ hsa_status_t HSAPlatform::iterate_agents_callback(hsa_agent_t agent, void* data)
 
     hsa_queue_t* queue = nullptr;
     if (queue_size > 0) {
-        status = hsa_queue_create(agent, queue_size, HSA_QUEUE_TYPE_SINGLE, NULL, NULL, UINT32_MAX, UINT32_MAX, &queue);
+        status = hsa_queue_create(agent, queue_size, HSA_QUEUE_TYPE_SINGLE, nullptr, nullptr, UINT32_MAX, UINT32_MAX, &queue);
         CHECK_HSA(status, "hsa_queue_create()");
 
         status = hsa_amd_profiling_set_profiler_enabled(queue, 1);
@@ -140,7 +140,7 @@ hsa_status_t HSAPlatform::iterate_agents_callback(hsa_agent_t agent, void* data)
     }
 
     hsa_signal_t signal;
-    status = hsa_signal_create(0, 0, NULL, &signal);
+    status = hsa_signal_create(0, 0, nullptr, &signal);
     CHECK_HSA(status, "hsa_signal_create()");
 
     auto dev = devices_->size();
@@ -324,7 +324,7 @@ void HSAPlatform::launch_kernel(DeviceId dev,
     if (!queue)
         error("The selected HSA device '%' cannot execute kernels", dev);
 
-    auto kernel_info = load_kernel(dev, file, name);
+    auto& kernel_info = load_kernel(dev, file, name);
 
     // set up arguments
     if (!kernel_info.kernarg_segment) {
@@ -356,7 +356,7 @@ void HSAPlatform::launch_kernel(DeviceId dev,
 
     hsa_signal_t launch_signal;
     if (runtime_->profiling_enabled()) {
-        hsa_status_t status = hsa_signal_create(1, 0, NULL, &launch_signal);
+        hsa_status_t status = hsa_signal_create(1, 0, nullptr, &launch_signal);
         CHECK_HSA(status, "hsa_signal_create()");
     } else
         launch_signal = signal;
@@ -418,7 +418,7 @@ void HSAPlatform::copy(const void* src, int64_t offset_src, void* dst, int64_t o
     CHECK_HSA(status, "hsa_memory_copy()");
 }
 
-HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string& filename, const std::string& kernelname) {
+HSAPlatform::KernelInfo& HSAPlatform::load_kernel(DeviceId dev, const std::string& filename, const std::string& kernelname) {
     auto& hsa_dev = devices_[dev];
     hsa_status_t status;
 
@@ -454,7 +454,7 @@ HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string
 
         debug("Compiling '%' on HSA device %", filename, dev);
 
-        status = hsa_executable_create_alt(HSA_PROFILE_FULL /* hsa_dev.profile */, hsa_dev.float_mode, NULL, &executable);
+        status = hsa_executable_create_alt(HSA_PROFILE_FULL /* hsa_dev.profile */, hsa_dev.float_mode, nullptr, &executable);
         CHECK_HSA(status, "hsa_executable_create_alt()");
 
         // TODO
@@ -466,10 +466,10 @@ HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string
         // -> hsa_executable_readonly_variable_define()
 
         hsa_loaded_code_object_t agent_code_object;
-        status = hsa_executable_load_agent_code_object(executable, hsa_dev.agent, reader, NULL, &agent_code_object);
+        status = hsa_executable_load_agent_code_object(executable, hsa_dev.agent, reader, nullptr, &agent_code_object);
         CHECK_HSA(status, "hsa_executable_load_agent_code_object()");
 
-        status = hsa_executable_freeze(executable, NULL);
+        status = hsa_executable_freeze(executable, nullptr);
         CHECK_HSA(status, "hsa_executable_freeze()");
 
         status = hsa_code_object_reader_destroy(reader);
@@ -489,8 +489,6 @@ HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string
     }
 
     // checks that the kernel exists
-    KernelInfo kernel_info;
-    kernel_info.kernarg_segment = nullptr;
     auto& kernel_cache = hsa_dev.kernels;
     auto& kernel_map = kernel_cache[executable.handle];
     auto kernel_it = kernel_map.find(kernelname);
@@ -502,6 +500,9 @@ HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string
         std::string kernelname_kd = kernelname + ".kd";
         status = hsa_executable_get_symbol_by_name(executable, kernelname_kd.c_str(), &hsa_dev.agent, &kernel_symbol);
         CHECK_HSA(status, "hsa_executable_get_symbol_by_name()");
+
+        KernelInfo kernel_info;
+        kernel_info.kernarg_segment = nullptr;
 
         status = hsa_executable_symbol_get_info(kernel_symbol, HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT, &kernel_info.kernel);
         CHECK_HSA(status, "hsa_executable_symbol_get_info()");
@@ -517,11 +518,12 @@ HSAPlatform::KernelInfo HSAPlatform::load_kernel(DeviceId dev, const std::string
         //CHECK_HSA(status, "hsa_memory_allocate()");
 
         hsa_dev.lock();
-        kernel_cache[executable.handle].emplace(kernelname, kernel_info);
-    } else {
-        kernel_info = kernel_it->second;
+        std::tie(kernel_it, std::ignore) = kernel_cache[executable.handle].emplace(kernelname, kernel_info);
     }
 
+    // We need to get the reference now, while we have the lock, since re-hashing
+    // may impact the validity of the iterator (but references are *not* invalidated)
+    KernelInfo& kernel_info = kernel_it->second;
     hsa_dev.unlock();
 
     return kernel_info;
