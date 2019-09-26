@@ -57,7 +57,8 @@ protected:
         cl_uint version_major;
         cl_uint version_minor;
         std::string platform_name;
-        bool is_intel_fpga = false;
+        bool is_intel_fpga  = false;
+        bool is_xilinx_fpga = false;
         std::string device_name;
         #ifdef CL_VERSION_2_0
         cl_device_svm_capabilities svm_caps;
@@ -79,6 +80,7 @@ protected:
             , version_minor(data.version_minor)
             , platform_name(data.platform_name)
             , is_intel_fpga(data.is_intel_fpga)
+            , is_xilinx_fpga(data.is_xilinx_fpga)
             , device_name(data.device_name)
             #ifdef CL_VERSION_2_0
             , svm_caps(data.svm_caps)
