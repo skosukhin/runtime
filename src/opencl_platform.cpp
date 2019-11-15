@@ -384,6 +384,9 @@ void OpenCLPlatform::launch_kernel(DeviceId dev,
         CHECK_OPENCL(err, "clReleaseEvent()");
     }
 
+    if (runtime_->dynamic_profiling_enabled())
+        dynamic_profile(dev,file);
+
     // release temporary buffers for struct arguments
     for (uint32_t i = 0; i < num_args; i++) {
         if (types[i] == KernelArgType::Struct) {
