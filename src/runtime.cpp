@@ -51,14 +51,22 @@ Runtime& runtime() {
 }
 
 Runtime::Runtime() {
-    profile_ = ProfileLevel::None;
+    profile_ = std::make_pair(ProfileLevel::None,ProfileLevel::None);
     const char* env_var = std::getenv("ANYDSL_PROFILE");
     if (env_var) {
         std::string env_str = env_var;
-        for (auto& c: env_str)
-            c = std::toupper(c, std::locale());
-        if (env_str == "FULL")
-            profile_ = ProfileLevel::Full;
+        for (auto& ch: env_str)
+            ch = std::toupper(ch, std::locale());
+        std::stringstream profile_levels(env_str);
+        std::string level;
+        while (profile_levels >> level) {
+            if (level == "FULL")
+                profile_.first = ProfileLevel::Full;
+            else if (level == "FPGA_DYNAMIC")
+                profile_.second = ProfileLevel::Fpga_dynamic;
+            else
+                profile_ = std::make_pair(ProfileLevel::None, ProfileLevel::None);
+        }
     }
 
     register_platform<CpuPlatform>();

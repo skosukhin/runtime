@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-enum class ProfileLevel : uint8_t { None = 0, Full };
+enum class ProfileLevel : uint8_t { None = 0, Full, Fpga_dynamic };
 
 class Runtime {
 public:
@@ -129,7 +129,9 @@ public:
         }
     }
 
-    bool profiling_enabled() { return profile_ == ProfileLevel::Full; }
+    bool profiling_enabled() { return profile_.first == ProfileLevel::Full; }
+    bool dynamic_profiling_enabled() { return profile_.second == ProfileLevel::Fpga_dynamic; }
+
 
 private:
     void check_device(PlatformId plat, DeviceId dev) {
@@ -137,7 +139,7 @@ private:
         unused(plat, dev);
     }
 
-    ProfileLevel profile_;
+    std::pair<ProfileLevel, ProfileLevel> profile_;
     std::vector<Platform*> platforms_;
     std::unordered_map<std::string, std::string> files_;
 };
