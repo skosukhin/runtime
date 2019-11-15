@@ -333,6 +333,11 @@ void OpenCLPlatform::launch_kernel(DeviceId dev,
                                    const uint32_t* grid, const uint32_t* block,
                                    void** args, const uint32_t* sizes, const uint32_t*, const KernelArgType* types,
                                    uint32_t num_args) {
+    if (devices_[dev].is_intel_fpga && num_args == 0) {
+        debug("processing by autorun kernel");
+        return;
+    }
+
     auto kernel = load_kernel(dev, file, name);
 
     // set up arguments
@@ -367,6 +372,7 @@ void OpenCLPlatform::launch_kernel(DeviceId dev,
     auto queue = devices_[dev].queue;
     if (devices_[dev].is_intel_fpga || devices_[dev].is_xilinx_fpga)
         queue = devices_[dev].kernels_queue[kernel];
+
     cl_int err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global_work_size, local_work_size, 0, NULL, &event);
     CHECK_OPENCL(err, "clEnqueueNDRangeKernel()");
     if (runtime_->profiling_enabled() && event) {
