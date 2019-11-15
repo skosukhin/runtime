@@ -132,7 +132,6 @@ public:
     bool profiling_enabled() { return profile_.first == ProfileLevel::Full; }
     bool dynamic_profiling_enabled() { return profile_.second == ProfileLevel::Fpga_dynamic; }
 
-
 private:
     void check_device(PlatformId plat, DeviceId dev) {
         assert((size_t)dev < platforms_[plat]->dev_count() && "Invalid device");
