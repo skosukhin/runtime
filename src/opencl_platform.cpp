@@ -649,13 +649,3 @@ cl_kernel OpenCLPlatform::load_kernel(DeviceId dev, const std::string& filename,
 
     return kernel;
 }
-
-#include "anydsl_runtime.h"
-void load_xilinx_binary(DeviceId dev, const char* filename) {
-    std::string filename_str(filename);
-    static_cast<OpenCLPlatform*>(runtime().platform(PlatformId(ANYDSL_OPENCL)))->load_and_compile_kernel(dev, filename_str);
-}
-
-extern "C" void anydsl_load_xilinx_binary(DeviceId dev, const char* filename) {
-    load_xilinx_binary(dev, filename);
-}
