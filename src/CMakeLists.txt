@@ -29,13 +29,20 @@ else()
     set(CUDA_PLATFORM "")
 endif()
 
-# look for OpenCL
+# look for OpenCL and Xilinx-HLS
+find_package(XHLS)
 find_package(OpenCL)
 if(OpenCL_FOUND)
     include_directories(BEFORE ${OpenCL_INCLUDE_DIRS}) # use header from specified path instead of CUDA's
     set(OPENCL_PLATFORM opencl_platform.cpp opencl_platform.h)
     set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_OPENCL)
     list(APPEND CONF_RUNTIME_LIBRARIES ${OpenCL_LIBRARIES})
+    if(XHLS_FOUND)
+        include_directories(BEFORE ${Xilinx_INCLUDE_DIRS} ${OpenCL_INCLUDE_DIRS})
+        link_directories(${XILINX_RUNTIME_DIR}/lib)
+        set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_XHLS)
+        list(APPEND CONF_RUNTIME_LIBRARIES ${Xilinx_LIBRARIES})
+        endif()
 else()
     set(OPENCL_PLATFORM "")
 endif()
@@ -61,6 +68,14 @@ if(TBB_FOUND)
     include_directories(${TBB_INCLUDE_DIRS})
     set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_TBB)
     list(APPEND CONF_RUNTIME_LIBRARIES ${TBB_LIBRARIES})
+endif()
+
+# look for Intel FPGA OpenCL
+find_package(IHLS)
+if(IntelFPGAOpenCL_FOUND)
+    include_directories(${IntelFPGAOpenCL_INCLUDE_DIRS})
+    set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_IntelFPGAOpenCL)
+    list(APPEND CONF_RUNTIME_LIBRARIES ${IntelFPGAOpenCL_LIBRARIES})
 endif()
 
 if(MSVC)
@@ -120,4 +135,5 @@ add_library(runtime
             ${OPENCL_PLATFORM}
             ${HSA_PLATFORM})
 
+        message(STATUS "${CONF_RUNTIME_LIBRARIES}")
 target_link_libraries(runtime PRIVATE ${CONF_RUNTIME_LIBRARIES})
