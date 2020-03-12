@@ -84,6 +84,11 @@ public:
     std::string load_cache(const std::string& str, const std::string& ext=".bin") const;
     void store_cache(const std::string& key, const std::string& str, const std::string ext=".bin") const;
 
+    /// Returns the platfrom at the given index, may be a DummyPlatform if the index is not a valid platform.
+    Platform* platform(PlatformId plat) {
+        return platforms_[plat];
+    }
+
     /// Launches a kernel on the platform and device.
     void launch_kernel(PlatformId plat, DeviceId dev,
                        const char* file, const char* kernel,
