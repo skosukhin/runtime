@@ -407,11 +407,11 @@ void OpenCLPlatform::launch_kernel(DeviceId dev,
     cl_int err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global_work_size, local_work_size, 0, NULL, &event);
     CHECK_OPENCL(err, "clEnqueueNDRangeKernel()");
     if (runtime_->profiling_enabled() && event) {
-        err = clSetEventCallback(event, CL_COMPLETE, &time_kernel_callback, &devices_[dev]);
+        cl_int err = clSetEventCallback(event, CL_COMPLETE, &time_kernel_callback, &devices_[dev]);
         devices_[dev].timings_counter.fetch_add(1);
         CHECK_OPENCL(err, "clSetEventCallback()");
     } else {
-        err = clReleaseEvent(event);
+        cl_int err = clReleaseEvent(event);
         CHECK_OPENCL(err, "clReleaseEvent()");
     }
 
