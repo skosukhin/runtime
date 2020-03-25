@@ -1,4 +1,6 @@
 #include "opencl_platform.h"
+
+// TODO: get rid of this cyclic dependency
 #include "runtime.h"
 
 #include <algorithm>
@@ -14,6 +16,12 @@ static inline std::string remove_extension(const std::string& file_name, const s
     auto pos = file_name.rfind(ext);
     return pos != std::string::npos ? file_name.substr(0, pos) : file_name;
 }
+
+// factory method
+template<> template<>
+Platform* PlatformFactory<OpenCLPlatform>::create(Runtime* runtime, const std::string&) {
+    return new OpenCLPlatform(runtime);
+};
 
 static std::string get_opencl_error_code_str(int error) {
     #define CL_ERROR_CODE(CODE) case CODE: return #CODE;
