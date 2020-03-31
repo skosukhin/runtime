@@ -644,15 +644,15 @@ std::string CudaPlatform::compile_cuda(DeviceId dev, const std::string& filename
 #endif
 
 namespace {
-    struct cuLinkDestroyDeleter {
+    struct CUDALinkerDeleter {
         void operator ()(CUlinkState linker) const {
             assert(cuLinkDestroy(linker) == CUDA_SUCCESS);
         }
     };
 
-    using unique_cuda_linker = std::unique_ptr<std::remove_pointer_t<CUlinkState>, cuLinkDestroyDeleter>;
+    using unique_cuda_linker = std::unique_ptr<std::remove_pointer_t<CUlinkState>, CUDALinkerDeleter>;
 
-    auto createLinker(CUjit_target target, unsigned int opt_level, char* info_log_buffer, size_t info_log_size, char* error_log_buffer, size_t error_log_size) {
+    auto create_linker(CUjit_target target, unsigned int opt_level, char* info_log_buffer, size_t info_log_size, char* error_log_buffer, size_t error_log_size) {
         CUjit_option options[] = {
             CU_JIT_INFO_LOG_BUFFER, CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
             CU_JIT_ERROR_LOG_BUFFER, CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
@@ -678,7 +678,7 @@ CUmodule CudaPlatform::create_module(DeviceId dev, const std::string& filename, 
 
     char info_log_buffer[10240] = {};
     char error_log_buffer[10240] = {};
-    auto linker = createLinker(devices_[dev].compute_capability, 4, info_log_buffer, sizeof(info_log_buffer), error_log_buffer, sizeof(error_log_buffer));
+    auto linker = create_linker(devices_[dev].compute_capability, 4, info_log_buffer, sizeof(info_log_buffer), error_log_buffer, sizeof(error_log_buffer));
 
     CHECK_CUDA(cuLinkAddData(linker.get(), CU_JIT_INPUT_PTX, const_cast<char*>(ptx_string.c_str()), ptx_string.length(), ptx_string.c_str(), 0U, nullptr, nullptr), "cuLinkAddData");
 
