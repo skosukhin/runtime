@@ -70,14 +70,8 @@ Platform* PlatformFactory<CudaPlatform>::create(Runtime* runtime, const std::str
 
 extern std::atomic<uint64_t> anydsl_kernel_time;
 
-namespace {
-    bool shouldDumpBinaries() {
-        return std::getenv("ANYDSL_DUMP_CUDA_BINARIES") != nullptr;
-    }
-}
-
 CudaPlatform::CudaPlatform(Runtime* runtime)
-    : Platform(runtime), dump_binaries(shouldDumpBinaries())
+    : Platform(runtime), dump_binaries(std::getenv("ANYDSL_DUMP_CUDA_BINARIES") != nullptr)
 {
     int device_count = 0, driver_version = 0, nvvm_major = 0, nvvm_minor = 0;
 
@@ -140,7 +134,7 @@ void CudaPlatform::erase_profiles(bool erase_all) {
             float time;
             if (status == CUDA_SUCCESS) {
                 cuEventElapsedTime(&time, profile->start, profile->end);
-                anydsl_kernel_time.fetch_add(static_cast<unsigned long long>(time * 1000));
+                anydsl_kernel_time.fetch_add(static_cast<uint64_t>(time * 1000));
             }
             cuEventDestroy(profile->start);
             cuEventDestroy(profile->end);
@@ -667,10 +661,10 @@ namespace {
         };
 
         void* option_values[]  = {
-            info_log_buffer, reinterpret_cast<void*>(static_cast<uintptr_t>(info_log_size)),
-            error_log_buffer, reinterpret_cast<void*>(static_cast<uintptr_t>(error_log_size)),
-            reinterpret_cast<void*>(static_cast<uintptr_t>(target)),
-            reinterpret_cast<void*>(static_cast<uintptr_t>(opt_level))
+            info_log_buffer, reinterpret_cast<void*>(info_log_size),
+            error_log_buffer, reinterpret_cast<void*>(error_log_size),
+            reinterpret_cast<void*>(target),
+            reinterpret_cast<void*>(opt_level)
         };
 
         CUlinkState linker;
@@ -697,8 +691,7 @@ CUmodule CudaPlatform::create_module(DeviceId dev, const std::string& filename, 
         info("Compilation info: %", info_log_buffer);
     CHECK_CUDA(err, "cuLinkComplete()");
 
-    if (dump_binaries)
-    {
+    if (dump_binaries) {
         std::ofstream file(filename + ".cubin", std::ios::binary);
         file.write(static_cast<const char*>(binary), binary_size);
     }
