@@ -18,6 +18,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Linker/Linker.h>
+#include <llvm/Support/raw_os_ostream.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/TargetRegistry.h>
@@ -26,6 +27,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 #endif
 
 #define CHECK_HSA(err, name) check_hsa_error(err, name, __FILE__, __LINE__)
@@ -323,7 +325,7 @@ extern std::atomic<uint64_t> anydsl_kernel_time;
 void HSAPlatform::launch_kernel(DeviceId dev,
                                 const char* file, const char* name,
                                 const uint32_t* grid, const uint32_t* block,
-                                void** args, const uint32_t* sizes, const uint32_t* aligns, const KernelArgType*,
+                                void** args, const uint32_t* sizes, const uint32_t* aligns, const uint32_t* allocs, const KernelArgType*,
                                 uint32_t num_args) {
     auto queue = devices_[dev].queue;
     if (!queue)
@@ -331,15 +333,16 @@ void HSAPlatform::launch_kernel(DeviceId dev,
 
     auto& kernel_info = load_kernel(dev, file, name);
 
+    auto align_up = [&] (unsigned int start, unsigned int align) -> unsigned int {
+        return (start + align - 1U) & -align;
+    };
+
     // set up arguments
     if (num_args) {
         if (!kernel_info.kernarg_segment) {
             size_t total_size = 0;
-            for (uint32_t i = 0; i < num_args; i++) {
-                total_size += sizes[i];
-                if (i != num_args - 1 && total_size % aligns[i + 1])
-                    total_size += aligns[i + 1] - total_size % aligns[i + 1];
-            }
+            for (uint32_t i = 0; i < num_args; i++)
+                total_size = (total_size + aligns[i] - 1) / aligns[i] * aligns[i] + allocs[i];
             kernel_info.kernarg_segment_size = total_size;
             hsa_status_t status = hsa_memory_allocate(devices_[dev].kernarg_region, kernel_info.kernarg_segment_size, &kernel_info.kernarg_segment);
             CHECK_HSA(status, "hsa_memory_allocate()");
@@ -348,12 +351,32 @@ void HSAPlatform::launch_kernel(DeviceId dev,
         size_t space = kernel_info.kernarg_segment_size;
         for (uint32_t i = 0; i < num_args; i++) {
             // align base address for next kernel argument
-            if (!std::align(aligns[i], sizes[i], cur, space))
+            if (!std::align(aligns[i], allocs[i], cur, space))
                 error("Incorrect kernel argument alignment detected");
             std::memcpy(cur, args[i], sizes[i]);
-            cur = reinterpret_cast<uint8_t*>(cur) + sizes[i];
+            info("arg at %", cur);
+            cur = reinterpret_cast<uint8_t*>(cur) + allocs[i];
         }
+
         size_t total = reinterpret_cast<uint8_t*>(cur) - reinterpret_cast<uint8_t*>(kernel_info.kernarg_segment);
+        if (align_up(total, sizeof(int64_t)) == kernel_info.kernarg_segment_size - 32) {
+            // implicit kernel args: global offset x, y, z
+            for (int i=0; i<3; ++i) {
+                if (!std::align(sizeof(int64_t), sizeof(int64_t), cur, space))
+                    error("Incorrect kernel argument alignment detected");
+                std::memset(cur, 0, sizeof(int64_t));
+                cur = reinterpret_cast<uint8_t*>(cur) + sizeof(int64_t);
+            }
+
+            // TODO: implicit kernel arg: printf buffer
+            //void* printf_buffer = alloc_unified(dev, 1024*1024);
+            //if (!std::align(sizeof(int64_t), sizeof(int64_t), cur, space))
+            //    error("Incorrect kernel argument alignment detected");
+            //std::memcpy(cur, &printf_buffer, sizeof(int64_t));
+            cur = reinterpret_cast<uint8_t*>(cur) + sizeof(int64_t);
+        }
+
+        total = reinterpret_cast<uint8_t*>(cur) - reinterpret_cast<uint8_t*>(kernel_info.kernarg_segment);
         if (total != kernel_info.kernarg_segment_size)
             error("HSA kernarg segment size for kernel '%' differs from argument size: % vs. %", name, kernel_info.kernarg_segment_size, total);
     }
@@ -635,37 +658,54 @@ std::string HSAPlatform::emit_gcn(const std::string& program, const std::string&
     if (linker.linkInModule(std::move(config_module), llvm::Linker::Flags::None))
         error("Can't link config into module");
 
-    llvm::legacy::FunctionPassManager function_pass_manager(llvm_module.get());
-    llvm::legacy::PassManager module_pass_manager;
+    auto run_pass_manager = [&] (std::unique_ptr<llvm::Module> module, llvm::CodeGenFileType cogen_file_type, std::string out_filename, bool print_ir=false) {
+        llvm::legacy::FunctionPassManager function_pass_manager(module.get());
+        llvm::legacy::PassManager module_pass_manager;
 
-    module_pass_manager.add(llvm::createTargetTransformInfoWrapperPass(machine->getTargetIRAnalysis()));
-    function_pass_manager.add(llvm::createTargetTransformInfoWrapperPass(machine->getTargetIRAnalysis()));
+        module_pass_manager.add(llvm::createTargetTransformInfoWrapperPass(machine->getTargetIRAnalysis()));
+        function_pass_manager.add(llvm::createTargetTransformInfoWrapperPass(machine->getTargetIRAnalysis()));
 
-    llvm::PassManagerBuilder builder;
-    builder.OptLevel = opt;
-    builder.Inliner = llvm::createFunctionInliningPass(builder.OptLevel, 0, false);
-    machine->adjustPassManager(builder);
-    builder.populateFunctionPassManager(function_pass_manager);
-    builder.populateModulePassManager(module_pass_manager);
+        llvm::PassManagerBuilder builder;
+        builder.OptLevel = opt;
+        builder.Inliner = llvm::createFunctionInliningPass(builder.OptLevel, 0, false);
+        machine->adjustPassManager(builder);
+        builder.populateFunctionPassManager(function_pass_manager);
+        builder.populateModulePassManager(module_pass_manager);
 
-    machine->Options.MCOptions.AsmVerbose = true;
+        machine->Options.MCOptions.AsmVerbose = true;
 
-    llvm::SmallString<0> outstr;
-    llvm::raw_svector_ostream llvm_stream(outstr);
+        llvm::SmallString<0> outstr;
+        llvm::raw_svector_ostream llvm_stream(outstr);
 
-    //machine->addPassesToEmitFile(module_pass_manager, llvm_stream, nullptr, llvm::TargetMachine::CGFT_AssemblyFile, true);
-    machine->addPassesToEmitFile(module_pass_manager, llvm_stream, nullptr, llvm::TargetMachine::CGFT_ObjectFile, true);
+        machine->addPassesToEmitFile(module_pass_manager, llvm_stream, nullptr, cogen_file_type, true);
 
-    function_pass_manager.doInitialization();
-    for (auto func = llvm_module->begin(); func != llvm_module->end(); ++func)
-        function_pass_manager.run(*func);
-    function_pass_manager.doFinalization();
-    module_pass_manager.run(*llvm_module);
+        function_pass_manager.doInitialization();
+        for (auto func = module->begin(); func != module->end(); ++func)
+            function_pass_manager.run(*func);
+        function_pass_manager.doFinalization();
+        module_pass_manager.run(*module);
 
-    std::string obj(outstr.begin(), outstr.end());
+        if (print_ir) {
+            std::error_code EC;
+            llvm::raw_fd_ostream outstream(filename + "_final.ll", EC);
+            module->print(outstream, nullptr);
+        }
+
+        std::string out(outstr.begin(), outstr.end());
+        runtime().store_file(out_filename, out);
+    };
+
+    std::string asm_file = filename + ".asm";
     std::string obj_file = filename + ".obj";
     std::string gcn_file = filename + ".gcn";
-    runtime().store_file(obj_file, obj);
+
+    bool print_ir = false;
+    if (print_ir)
+        run_pass_manager(llvm::CloneModule(*llvm_module.get()), llvm::CodeGenFileType::CGFT_AssemblyFile, asm_file, print_ir);
+    run_pass_manager(std::move(llvm_module), llvm::CodeGenFileType::CGFT_ObjectFile, obj_file);
+
+    llvm::raw_os_ostream lld_cout(std::cout);
+    llvm::raw_os_ostream lld_cerr(std::cerr);
     std::vector<const char*> lld_args = {
         "ld",
         "-shared",
@@ -673,7 +713,7 @@ std::string HSAPlatform::emit_gcn(const std::string& program, const std::string&
         "-o",
         gcn_file.c_str()
     };
-    if (!lld::elf::link(lld_args, false))
+    if (!lld::elf::link(lld_args, false, lld_cout, lld_cerr))
         error("Generating gcn using ld");
 
     return runtime().load_file(gcn_file);

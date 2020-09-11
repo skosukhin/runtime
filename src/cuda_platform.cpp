@@ -210,7 +210,7 @@ void CudaPlatform::release_host(DeviceId dev, void* ptr) {
 void CudaPlatform::launch_kernel(DeviceId dev,
                                  const char* file, const char* kernel,
                                  const uint32_t* grid, const uint32_t* block,
-                                 void** args, const uint32_t*, const uint32_t*, const KernelArgType*,
+                                 void** args, const uint32_t*, const uint32_t*, const uint32_t*, const KernelArgType*,
                                  uint32_t) {
     cuCtxPushCurrent(devices_[dev].ctx);
 
@@ -474,7 +474,7 @@ static std::string emit_nvptx(const std::string& program, const std::string& lib
     llvm::SmallString<0> outstr;
     llvm::raw_svector_ostream llvm_stream(outstr);
 
-    machine->addPassesToEmitFile(module_pass_manager, llvm_stream, nullptr, llvm::TargetMachine::CGFT_AssemblyFile, true);
+    machine->addPassesToEmitFile(module_pass_manager, llvm_stream, nullptr, llvm::CodeGenFileType::CGFT_AssemblyFile, true);
 
     function_pass_manager.doInitialization();
     for (auto func = llvm_module->begin(); func != llvm_module->end(); ++func)
