@@ -66,8 +66,8 @@ fn @alloc_cuda(dev: i32, size: i64) -> Buffer { alloc(runtime_device(1, dev), si
 fn @alloc_cuda_host(dev: i32, size: i64) -> Buffer { alloc_host(runtime_device(1, dev), size) }
 fn @alloc_cuda_unified(dev: i32, size: i64) -> Buffer { alloc_unified(runtime_device(1, dev), size) }
 fn @synchronize_cuda(dev: i32) -> () { runtime_synchronize(runtime_device(1, dev)) }
-fn @alloc_hls(dev: i32, size: i32) -> Buffer { alloc(runtime_device(2, dev), size) }
-fn @alloc_hls_unified(dev: i32, size: i32) -> Buffer { alloc_unified(runtime_device(2, dev), size) }
+fn @alloc_hls(dev: i32, size: i64) -> Buffer { alloc(runtime_device(2, dev), size) }
+fn @alloc_hls_unified(dev: i32, size: i64) -> Buffer { alloc_unified(runtime_device(2, dev), size) }
 fn @synchronize_opencl(dev: i32) -> () { runtime_synchronize(runtime_device(2, dev)) }
 fn @synchronize_hls(dev: i32) -> () { runtime_synchronize(runtime_device(2, dev)) }
 fn @alloc_opencl(dev: i32, size: i64) -> Buffer { alloc(runtime_device(2, dev), size) }
