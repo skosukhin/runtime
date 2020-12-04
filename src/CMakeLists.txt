@@ -46,6 +46,7 @@ if(OpenCL_FOUND)
         include_directories(BEFORE ${Xilinx_INCLUDE_DIRS} ${OpenCL_INCLUDE_DIRS})
         link_directories(${XILINX_RUNTIME_DIR}/lib)
         set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_XHLS)
+        add_definitions(-DRUNTIME_ENABLE_XHLS)
         list(APPEND CONF_RUNTIME_LIBRARIES ${Xilinx_LIBRARIES})
         endif()
 else()
@@ -76,9 +77,10 @@ set(AnyDSL_runtime_HAS_TBB_SUPPORT ${TBB_FOUND} CACHE INTERNAL "enables parallel
 
 # look for Intel FPGA OpenCL
 find_package(IHLS)
-if(IntelFPGAOpenCL_FOUND)
+if(IHLS_FOUND)
     include_directories(${IntelFPGAOpenCL_INCLUDE_DIRS})
     set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_IntelFPGAOpenCL)
+    add_definitions(-DRUNTIME_ENABLE_IntelFPGAOpenCL)
     list(APPEND CONF_RUNTIME_LIBRARIES ${IntelFPGAOpenCL_LIBRARIES})
 endif()
 
