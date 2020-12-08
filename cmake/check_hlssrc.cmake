@@ -168,7 +168,7 @@ if (EXISTS ${_basename}.hls)
 
         STRING(APPEND VPP_platform "${PLATFORM_NAME}")
         file(WRITE ${kernel_workspace}/config.cfg "[connectivity]\n")
-        if (GMEM_OPT)
+        if (GMEM_BANKS_OPT)
             set(arg_num 0)
             foreach (arg ${arg_matches})
                 file(APPEND ${kernel_workspace}/config.cfg "sp=${kernel}_1.${arg}:DDR[${arg_num}]\n")
