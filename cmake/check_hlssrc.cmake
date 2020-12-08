@@ -118,6 +118,7 @@ if (EXISTS ${_basename}.hls)
     set(VPP_config "--config")
     set(VPP_profile "--profile_kernel")
     set(VPP_debug "-g")
+    set(SAVE_REPORTS "--save-temps")
     set(PROFILE_TYPE "data:all:all:all")
 
     STRING(TOLOWER ${HW_EMULATION} HW_EMULATION)
@@ -143,11 +144,11 @@ if (EXISTS ${_basename}.hls)
 
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/xrt.ini ${XRT_INI})
 
-        execute_process(COMMAND ${Xilinx_VPP} ${VPP_debug} ${VPP_target} ${VPP_opt} ${VPP_platform} ${PLATFORM_NAME}
+        execute_process(COMMAND ${Xilinx_VPP} ${VPP_debug} ${SAVE_REPORTS} ${VPP_target} ${VPP_opt} ${VPP_platform} ${PLATFORM_NAME}
                                 ${VPP_compile} ${VPP_kernel} ${kernel} ${VPP_input} ${_basename}_hls.cpp
                                 ${VPP_out} ${kernel_workspace}/${kernel}.xo ${VPP_profile} ${PROFILE_TYPE})
     elseif (NOT SOC)
-        execute_process(COMMAND ${Xilinx_VPP} ${VPP_target} ${VPP_opt} ${VPP_platform} ${PLATFORM_NAME}
+        execute_process(COMMAND ${Xilinx_VPP} ${VPP_target} ${VPP_opt} ${SAVE_REPORTS} ${VPP_platform} ${PLATFORM_NAME}
                                 ${VPP_compile} ${VPP_kernel} ${kernel} ${VPP_input} ${_basename}_hls.cpp
                                 ${VPP_out} ${kernel_workspace}/${kernel}.xo)
     else ()
@@ -196,7 +197,7 @@ if (EXISTS ${_basename}.hls)
             execute_process(COMMAND ${Xilinx_EMU_CONFIG} --platform ${PLATFORM_NAME})
             set(EM_CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/emconfig.json)
             STRING(APPEND VPP_out "${kernel_workspace}/${kernel}.xo")
-            set(VPP_flags ${VPP_target} ${VPP_opt} ${VPP_platform} ${VPP_out})
+            set(VPP_flags ${VPP_target} ${VPP_opt} ${SAVE_REPORTS} ${VPP_platform} ${VPP_out})
             # Vitis compiling (just for software emulation)
             execute_process(COMMAND ${Xilinx_VPP} ${VPP_flags} ${VPP_compile} -DNO_SYNTH ${VPP_kernel} ${kernel}
                                     ${VPP_input} ${_basename}_hls.cpp ${VPP_config} ${kernel_workspace}/config.cfg)
