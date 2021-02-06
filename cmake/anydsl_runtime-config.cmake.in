@@ -262,6 +262,7 @@ function(anydsl_runtime_wrap outfiles)
 
     set(_basepath ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/${_basename})
     set(_llfile ${_basepath}.ll)
+    set(_llfile_ad ${_basepath}_ad.ll)
     set(_objfile ${_basepath}.o)
 
     set(_frontend_platform_files
@@ -299,11 +300,17 @@ function(anydsl_runtime_wrap outfiles)
         set_source_files_properties(${_hfile} PROPERTIES GENERATED TRUE)
     endif()
 
+    # perform AD on the .ll file
+    add_custom_command(OUTPUT ${_llfile_ad}
+      COMMAND ${OPT_BIN} ${_llfile} -load=${AnyDSL_runtime_ROOT_DIR}/../Enzyme/enzyme/build/Enzyme/LLVMEnzyme-10.so -enzyme -o ${_llfile_ad} -S
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+      DEPENDS ${_frontend_bin} ${_frontend_platform_files} ${_infiles} ${_llfile} VERBATIM)
+
     # run clang on the .ll file to get the .o
     add_custom_command(OUTPUT ${_objfile}
-        COMMAND ${Clang_BIN} ${_clang_flags} -c -o ${_objfile} ${_llfile}
+        COMMAND ${Clang_BIN} ${_clang_flags} -c -o ${_objfile} ${_llfile_ad}
         COMMAND ${CMAKE_COMMAND} -D_objfile=${_objfile} -D_basename=${_basename} -P ${AnyDSL_runtime_ROOT_DIR}/cmake/check_hlsobj.cmake
-        DEPENDS ${_llfile} VERBATIM COMMAND_EXPAND_LISTS)
+        DEPENDS ${_llfile_ad} VERBATIM COMMAND_EXPAND_LISTS)
 
     set_source_files_properties(${_objfile} PROPERTIES EXTERNAL_OBJECT true GENERATED true LANGUAGE CXX)
     set(${outfiles} ${${outfiles}} ${_objfile} ${_frontend_platform_files} PARENT_SCOPE)
