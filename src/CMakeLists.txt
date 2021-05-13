@@ -1,6 +1,31 @@
-set(CONF_RUNTIME_LIBRARIES)
+set(RUNTIME_PLATFORMS)
+set(RUNTIME_JIT_LIBRARIES)
 
-# Look for CUDA
+if(MSVC)
+    add_compile_options("/experimental:external" "/external:anglebrackets" "/external:W0")
+else()
+    add_compile_options("-Wall" "-Wextra")
+endif()
+
+# Necessary to specify whether or not to build shared libraries on a per-project basis
+option(AnyDSL_runtime_BUILD_SHARED "Builds a shared library for the runtime (and JIT, if enabled)" ${BUILD_SHARED_LIBS})
+if (AnyDSL_runtime_BUILD_SHARED)
+    set(AnyDSL_runtime_BUILD "SHARED")
+else()
+    set(AnyDSL_runtime_BUILD "STATIC")
+endif()
+
+set(AnyDSL_runtime_CONFIG_FILE ${CMAKE_BINARY_DIR}/include/anydsl_runtime_config.h)
+add_library(runtime_base STATIC
+    ${AnyDSL_runtime_CONFIG_FILE}
+    runtime.cpp
+    runtime.h
+    platform.h
+    cpu_platform.h
+    dummy_platform.h
+    log.h)
+
+# look for CUDA
 find_package(CUDA QUIET)
 if(CUDA_FOUND)
     find_library(CUDA_NVVM_LIBRARY nvvm
@@ -17,8 +42,10 @@ if(CUDA_FOUND)
     find_library(CUDA_LIBRARY cuda
         HINTS ${CUDA_TOOLKIT_ROOT_DIR}
         PATH_SUFFIXES lib lib64 lib/x64)
-    set(CUDA_PLATFORM cuda_platform.cpp cuda_platform.h)
-    set_source_files_properties(${CUDA_PLATFORM} PROPERTIES INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS};${CUDA_TOOLKIT_ROOT_DIR}/nvvm/include")
+    add_library(runtime_cuda STATIC cuda_platform.cpp cuda_platform.h)
+    target_include_directories(runtime_cuda PRIVATE ${CUDA_INCLUDE_DIRS} "${CUDA_TOOLKIT_ROOT_DIR}/nvvm/include")
+    target_link_libraries(runtime_cuda PRIVATE runtime_base ${CUDA_LIBRARY} ${CUDA_NVVM_LIBRARY} ${CUDA_NVRTC_LIBRARY})
+    list(APPEND RUNTIME_PLATFORMS runtime_cuda)
     # TODO: would be nice to reference directly the file
     find_path(AnyDSL_runtime_LIBDEVICE_DIR
         NAMES libdevice.10.bc libdevice.compute_50.10.bc libdevice.compute_35.10.bc libdevice.compute_30.10.bc libdevice.compute_20.10.bc
@@ -30,7 +57,6 @@ if(CUDA_FOUND)
     find_path(AnyDSL_runtime_NVCC_INC NAMES cuda.h nvrtc.h
         HINTS ${CUDA_INCLUDE_DIRS} ${CUDA_TOOLKIT_INCLUDE} ${CUDA_TOOLKIT_ROOT_DIR}
         PATH_SUFFIXES include)
-    list(APPEND CONF_RUNTIME_LIBRARIES ${CUDA_LIBRARY} ${CUDA_NVVM_LIBRARY} ${CUDA_NVRTC_LIBRARY})
     mark_as_advanced(AnyDSL_runtime_LIBDEVICE_DIR AnyDSL_runtime_NVCC_BIN AnyDSL_runtime_NVCC_INC)
 endif()
 set(AnyDSL_runtime_HAS_CUDA_SUPPORT ${CUDA_FOUND} CACHE INTERNAL "enables CUDA/NVVM support")
@@ -39,133 +65,165 @@ set(AnyDSL_runtime_HAS_CUDA_SUPPORT ${CUDA_FOUND} CACHE INTERNAL "enables CUDA/N
 find_package(XHLS)
 find_package(OpenCL)
 if(OpenCL_FOUND)
-    set(OPENCL_PLATFORM opencl_platform.cpp opencl_platform.h)
-    set_source_files_properties(${OPENCL_PLATFORM} PROPERTIES INCLUDE_DIRECTORIES ${OpenCL_INCLUDE_DIRS})
-    list(APPEND CONF_RUNTIME_LIBRARIES ${OpenCL_LIBRARIES})
+    add_library(runtime_opencl STATIC opencl_platform.cpp opencl_platform.h)
+    target_include_directories(runtime_opencl PRIVATE ${OpenCL_INCLUDE_DIRS})
+    target_link_libraries(runtime_opencl PRIVATE runtime_base ${OpenCL_LIBRARIES})
+    list(APPEND RUNTIME_PLATFORMS runtime_opencl)
+
     if(XHLS_FOUND)
-        include_directories(BEFORE ${Xilinx_INCLUDE_DIRS} ${OpenCL_INCLUDE_DIRS})
+        #include_directories(BEFORE ${Xilinx_INCLUDE_DIRS} ${OpenCL_INCLUDE_DIRS})
+        target_include_directories(runtime_opencl BEFORE PRIVATE ${Xilinx_INCLUDE_DIRS} PRIVATE ${OpenCL_INCLUDE_DIRS})
         link_directories(${XILINX_RUNTIME_DIR}/lib)
+        #target_link_libraries(runtime_opencl PRIVATE runtime_base ${XILINX_RUNTIME_DIR}/lib)
         set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_XHLS)
         add_definitions(-DRUNTIME_ENABLE_XHLS)
-        list(APPEND CONF_RUNTIME_LIBRARIES ${Xilinx_LIBRARIES})
+        #list(APPEND RUNTIME_PLATFORMS ${Xilinx_LIBRARIES})
+        list(APPEND RUNTIME_PLATFORMS runtime_opencl)
         endif()
 else()
     set(OPENCL_PLATFORM "")
 endif()
-set(AnyDSL_runtime_HAS_OPENCL_SUPPORT ${OpenCL_FOUND} CACHE INTERNAL "OpenCL support enabled")
+set(AnyDSL_runtime_HAS_OPENCL_SUPPORT ${OpenCL_FOUND} CACHE INTERNAL "enables OpenCL support")
 
 # look for HSA
 find_package(HSA)
 if(HSA_FOUND)
-    set(HSA_PLATFORM hsa_platform.cpp hsa_platform.h)
-    set_source_files_properties(${HSA_PLATFORM} PROPERTIES INCLUDE_DIRECTORIES ${HSA_INCLUDE_DIRS})
-    list(APPEND CONF_RUNTIME_LIBRARIES ${HSA_LIBRARIES})
+    add_library(runtime_hsa STATIC hsa_platform.cpp hsa_platform.h)
+    target_include_directories(runtime_hsa PRIVATE ${HSA_INCLUDE_DIRS})
+    target_link_libraries(runtime_hsa PRIVATE runtime_base ${HSA_LIBRARIES})
+    list(APPEND RUNTIME_PLATFORMS runtime_hsa)
 endif()
-set(AnyDSL_runtime_HAS_HSA_SUPPORT ${HSA_FOUND} CACHE INTERNAL "HSA support enabled")
-
-# look for Threads
-find_package(Threads REQUIRED)
-list(APPEND CONF_RUNTIME_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
-
-# look for TBB
-find_package(TBB)
-if(TBB_FOUND)
-    set_source_files_properties(runtime.cpp PROPERTIES INCLUDE_DIRECTORIES ${TBB_INCLUDE_DIRS})
-    list(APPEND CONF_RUNTIME_LIBRARIES ${TBB_LIBRARIES})
-endif()
-set(AnyDSL_runtime_HAS_TBB_SUPPORT ${TBB_FOUND} CACHE INTERNAL "enables parallel using TBB")
+set(AnyDSL_runtime_HAS_HSA_SUPPORT ${HSA_FOUND} CACHE INTERNAL "enables HSA support")
 
 # look for Intel FPGA OpenCL
-find_package(IHLS)
-if(IHLS_FOUND)
-    include_directories(${IntelFPGAOpenCL_INCLUDE_DIRS})
-    set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_IntelFPGAOpenCL)
-    add_definitions(-DRUNTIME_ENABLE_IntelFPGAOpenCL)
-    list(APPEND CONF_RUNTIME_LIBRARIES ${IntelFPGAOpenCL_LIBRARIES})
-endif()
+#find_package(IHLS)
+#if(IHLS_FOUND)
+#    include_directories(${IntelFPGAOpenCL_INCLUDE_DIRS})
+#    set(RUNTIME_DEFINITIONS ${RUNTIME_DEFINITIONS} -DRUNTIME_ENABLE_IntelFPGAOpenCL)
+#    add_definitions(-DRUNTIME_ENABLE_IntelFPGAOpenCL)
+#    list(APPEND RUNTIME_PLATFORMS ${IntelFPGAOpenCL_LIBRARIES})
+#endif()
 
-if(MSVC)
-    add_compile_options("/experimental:external" "/external:anglebrackets" "/external:W0")
-else()
-    add_compile_options("-Wall" "-Wextra" "-fvisibility=hidden")
-endif()
-
-if(RUNTIME_JIT)
-    set(RUNTIME_SOURCES_INC_FILE ${CMAKE_CURRENT_BINARY_DIR}/runtime_srcs.inc)
-    set(RUNTIME_JIT_SRC jit.cpp ${RUNTIME_SOURCES_INC_FILE})
-    find_package(Impala REQUIRED)
-    find_package(Thorin REQUIRED)
-    if(NOT Thorin_HAS_LLVM_SUPPORT)
-        message(FATAL_ERROR "RUNTIME_JIT requires Thorin to be built with LLVM")
-    endif()
-
-    find_package(LLVM REQUIRED)
+# look for LLVM for nvptx and gcn
+find_package(LLVM)
+if(LLVM_FOUND)
     add_definitions(${LLVM_DEFINITIONS})
-    list(APPEND CONF_RUNTIME_LIBRARIES ${Thorin_LIBRARIES} ${Impala_LIBRARY} ${LLVM_JIT_LIBRARIES})
-    include_directories(${Impala_INCLUDE_DIR} ${Thorin_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
     include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
+    set(AnyDSL_runtime_LLVM_COMPONENTS irreader support ${LLVM_TARGETS_TO_BUILD})
+    set(AnyDSL_runtime_JIT_LLVM_COMPONENTS ${AnyDSL_runtime_LLVM_COMPONENTS} mcjit)
     if(AnyDSL_runtime_HAS_HSA_SUPPORT)
         find_library(LLD_COMMON_LIBRARY lldCommon HINTS ${LLVM_LIBRARY_DIRS})
         find_library(LLD_CORE_LIBRARY   lldCore   HINTS ${LLVM_LIBRARY_DIRS})
         find_library(LLD_DRIVER_LIBRARY lldDriver HINTS ${LLVM_LIBRARY_DIRS})
         find_library(LLD_ELF_LIBRARY    lldELF    HINTS ${LLVM_LIBRARY_DIRS})
-        list(APPEND CONF_RUNTIME_LIBRARIES ${LLD_CORE_LIBRARY} ${LLD_ELF_LIBRARY} ${LLD_DRIVER_LIBRARY} ${LLD_COMMON_LIBRARY})
+        # The HSA platform requires LLD and a couple of LLVM components.
+        # TODO: This is very brittle. We should get a rid of LLD and use LLVM's linker API directly
+        target_link_libraries(runtime_hsa PRIVATE ${LLD_CORE_LIBRARY} ${LLD_ELF_LIBRARY} ${LLD_DRIVER_LIBRARY} ${LLD_COMMON_LIBRARY})
+        llvm_config(runtime_hsa ${AnyDSL_LLVM_LINK_SHARED} lto option ${LLVM_TARGETS_TO_BUILD})
+    endif()
+endif()
+set(AnyDSL_runtime_HAS_LLVM_SUPPORT ${LLVM_FOUND} CACHE INTERNAL "enables nvptx / gcn support")
+
+if(RUNTIME_JIT)
+    function(add_runtime_jit frontend)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        set(RUNTIME_FRONTEND_SRCS
+            ../platforms/${frontend}/intrinsics_rv.impala
+            ../platforms/${frontend}/intrinsics_cpu.impala
+            ../platforms/${frontend}/intrinsics_hls.impala
+            ../platforms/${frontend}/intrinsics_cuda.impala
+            ../platforms/${frontend}/intrinsics_nvvm.impala
+            ../platforms/${frontend}/intrinsics_amdgpu.impala
+            ../platforms/${frontend}/intrinsics_opencl.impala
+            ../platforms/${frontend}/intrinsics_thorin.impala
+            ../platforms/${frontend}/intrinsics.impala
+            ../platforms/${frontend}/runtime.impala)
+
+        set(RUNTIME_JIT_SRC jit.cpp)
+        set(RUNTIME_SOURCES_FRONTEND_INC_FILE ${CMAKE_CURRENT_BINARY_DIR}/${frontend}/runtime_srcs.inc)
+        add_custom_command(OUTPUT ${RUNTIME_SOURCES_FRONTEND_INC_FILE}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/${frontend}
+            COMMAND ${Python3_EXECUTABLE} extract_runtime_srcs.py ${RUNTIME_FRONTEND_SRCS} > ${RUNTIME_SOURCES_FRONTEND_INC_FILE}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            DEPENDS extract_runtime_srcs.py ${RUNTIME_FRONTEND_SRCS})
+        add_library(runtime_jit_${frontend} ${AnyDSL_runtime_BUILD} ${RUNTIME_JIT_SRC} ${RUNTIME_SOURCES_FRONTEND_INC_FILE})
+        target_include_directories(runtime_jit_${frontend} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${frontend} ${Thorin_INCLUDE_DIRS})
+        set_target_properties(runtime_jit_${frontend} PROPERTIES CXX_VISIBILITY_PRESET hidden)
+        set_source_files_properties(${RUNTIME_SOURCES_FRONTEND_INC_FILE} PROPERTIES GENERATED TRUE)
+    endfunction()
+
+    find_package(Artic QUIET)
+    find_package(Impala QUIET)
+    if(NOT (Artic_FOUND OR Impala_FOUND))
+        message(FATAL_ERROR "Enabling RUNTIME_JIT requires artic or impala.\nPlease specify either Artic_DIR or Impala_DIR or both.")
     endif()
 
-    find_package(PythonInterp REQUIRED)
-    set(RUNTIME_IMPALA_SRCS
-        ../platforms/intrinsics_rv.impala
-        ../platforms/intrinsics_cpu.impala
-        ../platforms/intrinsics_hls.impala
-        ../platforms/intrinsics_cuda.impala
-        ../platforms/intrinsics_nvvm.impala
-        ../platforms/intrinsics_amdgpu.impala
-        ../platforms/intrinsics_opencl.impala
-        ../platforms/intrinsics_thorin.impala
-        ../platforms/intrinsics.impala
-        runtime.impala)
-    add_custom_command(OUTPUT ${RUNTIME_SOURCES_INC_FILE}
-        COMMAND ${PYTHON_EXECUTABLE} extract_runtime_srcs.py ${RUNTIME_IMPALA_SRCS} > ${RUNTIME_SOURCES_INC_FILE}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS extract_runtime_srcs.py ${RUNTIME_IMPALA_SRCS})
-    set_source_files_properties(${RUNTIME_SOURCES_INC_FILE} PROPERTIES GENERATED TRUE)
-endif()
-set(AnyDSL_runtime_HAS_JIT_SUPPORT ${RUNTIME_JIT} CACHE INTERNAL "enables anydsl_compile() api")
+    find_package(Thorin REQUIRED)
+    if(NOT Thorin_HAS_LLVM_SUPPORT)
+        message(FATAL_ERROR "Enabling RUNTIME_JIT requires Thorin to be built with LLVM")
+    endif()
 
-option(AnyDSL_runtime_BUILD_SHARED "whether to build AnyDSL_runtime as shared or static library" ${BUILD_SHARED_LIBS})
-if(AnyDSL_runtime_BUILD_SHARED)
-    set(AnyDSL_runtime_BUILD "SHARED")
-else()
-    set(AnyDSL_runtime_BUILD "STATIC")
+    if(NOT LLVM_FOUND)
+        message(FATAL_ERROR "Enabling RUNTIME_JIT requires runtime to be built with LLVM")
+    endif()
+
+    if(Artic_FOUND)
+        message(STATUS "Found Artic: ${Artic_DIR}")
+        add_runtime_jit(artic)
+        list(APPEND RUNTIME_JIT_LIBRARIES runtime_jit_artic)
+        target_link_libraries(runtime_jit_artic PRIVATE ${Thorin_LIBRARIES} ${Artic_LIBRARY})
+        llvm_config(runtime_jit_artic ${AnyDSL_LLVM_LINK_SHARED} ${AnyDSL_runtime_JIT_LLVM_COMPONENTS})
+    endif()
+    if(Impala_FOUND)
+        message(STATUS "Found Impala: ${Impala_DIR}")
+        add_runtime_jit(impala)
+        list(APPEND RUNTIME_JIT_LIBRARIES runtime_jit_impala)
+        target_link_libraries(runtime_jit_impala PRIVATE ${Thorin_LIBRARIES} ${Impala_LIBRARY})
+        llvm_config(runtime_jit_impala ${AnyDSL_LLVM_LINK_SHARED} ${AnyDSL_runtime_JIT_LLVM_COMPONENTS})
+    endif()
 endif()
+set(AnyDSL_runtime_HAS_JIT_SUPPORT ${RUNTIME_JIT_LIBRARIES} CACHE INTERNAL "enables anydsl_compile() API")
 
 include_directories(${CMAKE_BINARY_DIR}/include)
-set(AnyDSL_runtime_CONFIG_FILE ${CMAKE_BINARY_DIR}/include/anydsl_runtime_config.h)
 configure_file(anydsl_runtime_config.h.in ${AnyDSL_runtime_CONFIG_FILE} @ONLY)
 set_source_files_properties(${AnyDSL_runtime_CONFIG_FILE} PROPERTIES GENERATED TRUE)
 
-add_library(runtime ${AnyDSL_runtime_BUILD}
-            runtime.cpp
-            runtime.h
-            anydsl_runtime.h
-            anydsl_runtime.hpp
-            platform.h
-            cpu_platform.cpp
-            cpu_platform.h
-            dummy_platform.h
-            log.h
-            ${AnyDSL_runtime_CONFIG_FILE}
-            ${RUNTIME_JIT_SRC}
-            ${CUDA_PLATFORM}
-            ${OPENCL_PLATFORM}
-            ${HSA_PLATFORM})
+add_library(runtime
+    ${AnyDSL_runtime_BUILD}
+    ${AnyDSL_runtime_CONFIG_FILE}
+    anydsl_runtime.cpp
+    anydsl_runtime.h
+    anydsl_runtime.hpp)
 
-        message(STATUS "${CONF_RUNTIME_LIBRARIES}")
-target_link_libraries(runtime PRIVATE ${CONF_RUNTIME_LIBRARIES})
+# System threads are required to use either TBB or C++11 threads
+find_package(Threads REQUIRED)
+target_link_libraries(runtime PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+
+# TBB is optional, C++11 threads are used when it is not available
+find_package(TBB)
+if(TBB_FOUND)
+    target_include_directories(runtime PRIVATE ${TBB_INCLUDE_DIRS})
+    target_link_libraries(runtime PRIVATE ${TBB_LIBRARIES})
+endif()
+set(AnyDSL_runtime_HAS_TBB_SUPPORT ${TBB_FOUND} CACHE INTERNAL "enables parallel using TBB")
+
+# If the runtime is built as a shared library, individual
+# dependencies must be built with position independent code.
+if(AnyDSL_runtime_BUILD_SHARED)
+    set_property(TARGET runtime_base ${RUNTIME_PLATFORMS} PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()
+
+target_link_libraries(runtime PRIVATE runtime_base ${RUNTIME_PLATFORMS})
 set_target_properties(runtime PROPERTIES DEFINE_SYMBOL "AnyDSL_runtime_EXPORTS")
+set_target_properties(runtime PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
-if(RUNTIME_JIT AND Thorin_HAS_LLVM_SUPPORT AND LLVM_FOUND)
-    set(AnyDSL_runtime_LLVM_COMPONENTS mcjit irreader support ${LLVM_TARGETS_TO_BUILD})
+foreach(jit_lib ${AnyDSL_runtime_HAS_JIT_SUPPORT})
+    target_link_libraries(${jit_lib} PRIVATE runtime runtime_base)
+	set_target_properties(${jit_lib} PROPERTIES DEFINE_SYMBOL "AnyDSL_runtime_jit_EXPORTS")
+endforeach()
+
+if(LLVM_FOUND)
     llvm_config(runtime ${AnyDSL_LLVM_LINK_SHARED} ${AnyDSL_runtime_LLVM_COMPONENTS})
 endif()
 
+set(RUNTIME_LIBRARIES runtime ${RUNTIME_JIT_LIBRARIES} PARENT_SCOPE)

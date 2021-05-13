@@ -30,11 +30,11 @@ AnyDSL_runtime_API void  anydsl_release_host(int32_t, void*);
 
 AnyDSL_runtime_API void anydsl_copy(int32_t, const void*, int64_t, int32_t, void*, int64_t, int64_t);
 
-AnyDSL_runtime_API void anydsl_launch_kernel(int32_t,
-                          const char*, const char*,
-                          const uint32_t*, const uint32_t*,
-                          void**, const uint32_t*, const uint32_t*, const uint32_t*, const uint8_t*,
-                          uint32_t);
+AnyDSL_runtime_API void anydsl_launch_kernel(
+    int32_t, const char*, const char*,
+    const uint32_t*, const uint32_t*,
+    void**, const uint32_t*, const uint32_t*, const uint32_t*, const uint8_t*,
+    uint32_t);
 AnyDSL_runtime_API void anydsl_synchronize(int32_t);
 
 AnyDSL_runtime_API void anydsl_random_seed(uint32_t);
@@ -79,12 +79,6 @@ AnyDSL_runtime_API int32_t anydsl_create_graph();
 AnyDSL_runtime_API int32_t anydsl_create_task(int32_t, Closure);
 AnyDSL_runtime_API void    anydsl_create_edge(int32_t, int32_t);
 AnyDSL_runtime_API void    anydsl_execute_graph(int32_t, int32_t);
-
-#ifdef AnyDSL_runtime_HAS_JIT_SUPPORT
-AnyDSL_runtime_API void  anydsl_link(const char*);
-AnyDSL_runtime_API int32_t anydsl_compile(const char*, uint32_t, uint32_t);
-AnyDSL_runtime_API void *anydsl_lookup_function(int32_t, const char*);
-#endif
 
 #ifdef __cplusplus
 }

@@ -3,15 +3,15 @@
 
 #include "anydsl_runtime_config.h"
 #include "log.h"
+#include "runtime.h"
 
 #include <cstdint>
 #include <string>
 
-class Runtime;
-enum DeviceId   : uint32_t {};
-enum PlatformId : uint32_t {};
-
-enum class KernelArgType : uint8_t { Val = 0, Ptr, Struct };
+void register_cpu_platform(Runtime*);
+void register_cuda_platform(Runtime*);
+void register_opencl_platform(Runtime*);
+void register_hsa_platform(Runtime*);
 
 /// A runtime platform. Exposes a set of devices, a copy function,
 /// and functions to allocate and release memory.
@@ -37,11 +37,7 @@ public:
     virtual void release_host(DeviceId dev, void* ptr) = 0;
 
     /// Launches a kernel with the given block/grid size and arguments.
-    virtual void launch_kernel(DeviceId dev,
-                               const char* file, const char* kernel,
-                               const uint32_t* grid, const uint32_t* block,
-                               void** args, const uint32_t* sizes, const uint32_t* aligns, const uint32_t* allocs, const KernelArgType* types,
-                               uint32_t num_args) = 0;
+    virtual void launch_kernel(DeviceId dev, const LaunchParams& launch_params) = 0;
     /// Waits for the completion of all the launched kernels on the given device.
     virtual void synchronize(DeviceId dev) = 0;
 
@@ -68,13 +64,5 @@ protected:
 
     Runtime* runtime_;
 };
-
-
-template<class PLATFORM>
-struct PlatformFactory {
-    template<typename... Args>
-    Platform* create(Runtime* runtime, const std::string& reference, Args... args);
-};
-
 
 #endif

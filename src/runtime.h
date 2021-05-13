@@ -1,78 +1,76 @@
 #ifndef RUNTIME_H
 #define RUNTIME_H
 
-#include "platform.h"
-
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <atomic>
+#include <memory>
 
+#include "log.h"
+
+enum DeviceId   : uint32_t {};
+enum PlatformId : uint32_t {};
 enum class ProfileLevel : uint8_t { None = 0, Full, Fpga_dynamic };
+
+class Platform;
+
+enum class KernelArgType : uint8_t { Val = 0, Ptr, Struct };
+
+/// The parameters to a `anydsl_launch_kernel()` call.
+struct LaunchParams {
+    const char* file_name;
+    const char* kernel_name;
+    const uint32_t* grid;
+    const uint32_t* block;
+    struct {
+        void** data;
+        const uint32_t* sizes;
+        const uint32_t* aligns;
+        const uint32_t* alloc_sizes;
+        const KernelArgType* types;
+    } args;
+    uint32_t num_args;
+};
 
 class Runtime {
 public:
-    Runtime();
-
-    ~Runtime() {
-        for (auto p: platforms_) {
-            delete p;
-        }
-    }
+    //Runtime(ProfileLevel);
+    Runtime(std::pair<ProfileLevel, ProfileLevel>);
 
     /// Registers the given platform into the runtime.
     template <typename T, typename... Args>
-    void register_platform(const std::string& name, Args... args) {
-        PlatformFactory<T> factory;
-        Platform* p = factory.create(this, name, args...);
-        platforms_.push_back(p);
+    void register_platform(Args&&... args) {
+        platforms_.emplace_back(new T(this, std::forward<Args&&>(args)...));
     }
 
     /// Displays available platforms.
-    void display_info() {
-        info("Available platforms:");
-        for (auto p: platforms_) {
-            info("    * %: % device(s)", p->name(), p->dev_count());
-        }
-    }
+    void display_info();
 
     /// Allocates memory on the given device.
-    void* alloc(PlatformId plat, DeviceId dev, int64_t size) {
-        check_device(plat, dev);
-        return platforms_[plat]->alloc(dev, size);
-    }
-
+    void* alloc(PlatformId plat, DeviceId dev, int64_t size);
     /// Allocates page-locked memory on the given platform and device.
-    void* alloc_host(PlatformId plat, DeviceId dev, int64_t size) {
-        check_device(plat, dev);
-        return platforms_[plat]->alloc_host(dev, size);
-    }
-
+    void* alloc_host(PlatformId plat, DeviceId dev, int64_t size);
     /// Allocates unified memory on the given platform and device.
-    void* alloc_unified(PlatformId plat, DeviceId dev, int64_t size) {
-        check_device(plat, dev);
-        return platforms_[plat]->alloc_unified(dev, size);
-    }
-
+    void* alloc_unified(PlatformId plat, DeviceId dev, int64_t size);
     /// Returns the device memory associated with the page-locked memory.
-    void* get_device_ptr(PlatformId plat, DeviceId dev, void* ptr) {
-        check_device(plat, dev);
-        return platforms_[plat]->get_device_ptr(dev, ptr);
-    }
-
+    void* get_device_ptr(PlatformId plat, DeviceId dev, void* ptr);
     /// Releases memory.
-    void release(PlatformId plat, DeviceId dev, void* ptr) {
-        check_device(plat, dev);
-        platforms_[plat]->release(dev, ptr);
-    }
-
+    void release(PlatformId plat, DeviceId dev, void* ptr);
     /// Releases previously allocated page-locked memory.
-    void release_host(PlatformId plat, DeviceId dev, void* ptr) {
-        check_device(plat, dev);
-        platforms_[plat]->release_host(dev, ptr);
-    }
+    void release_host(PlatformId plat, DeviceId dev, void* ptr);
+    /// Copies memory between devices.
+    void copy(
+        PlatformId plat_src, DeviceId dev_src, const void* src, int64_t offset_src,
+        PlatformId plat_dst, DeviceId dev_dst, void* dst, int64_t offset_dst, int64_t size);
+
+    /// Launches a kernel on the platform and device.
+    void launch_kernel(PlatformId plat, DeviceId dev, const LaunchParams& launch_params);
+    /// Waits for the completion of all kernels on the given platform and device.
+    void synchronize(PlatformId plat, DeviceId dev);
 
     /// Associate a program string to a given filename.
     void register_file(const std::string& filename, const std::string& program_string) {
@@ -82,73 +80,31 @@ public:
     std::string load_file(const std::string& filename) const;
     void store_file(const std::string& filename, const std::string& str) const;
 
-    std::string load_cache(const std::string& str, const std::string& ext=".bin") const;
-    void store_cache(const std::string& key, const std::string& str, const std::string ext=".bin") const;
+    std::string load_from_cache(const std::string& str, const std::string& ext=".bin") const;
+    void store_to_cache(const std::string& key, const std::string& str, const std::string ext=".bin") const;
 
+ //   /// Returns the platfrom at the given index, may be a DummyPlatform if the index is not a valid platform.
+ //   Platform* platform(PlatformId plat) {
+ //       return platforms_[plat];
+ //   }
+ //
     /// Returns the platfrom at the given index, may be a DummyPlatform if the index is not a valid platform.
-    Platform* platform(PlatformId plat) {
-        return platforms_[plat];
-    }
-
-    /// Launches a kernel on the platform and device.
-    void launch_kernel(PlatformId plat, DeviceId dev,
-                       const char* file, const char* kernel,
-                       const uint32_t* grid, const uint32_t* block,
-                       void** args, const uint32_t* sizes, const uint32_t* aligns, const uint32_t* allocs, const KernelArgType* types,
-                       uint32_t num_args) {
-        check_device(plat, dev);
-        platforms_[plat]->launch_kernel(dev,
-                                        file, kernel,
-                                        grid, block,
-                                        args, sizes, aligns, allocs, types,
-                                        num_args);
-    }
-
-    /// Waits for the completion of all kernels on the given platform and device.
-    void synchronize(PlatformId plat, DeviceId dev) {
-        check_device(plat, dev);
-        platforms_[plat]->synchronize(dev);
-    }
-
-    /// Copies memory.
-    void copy(PlatformId plat_src, DeviceId dev_src, const void* src, int64_t offset_src,
-              PlatformId plat_dst, DeviceId dev_dst, void* dst, int64_t offset_dst, int64_t size) {
-        check_device(plat_src, dev_src);
-        check_device(plat_dst, dev_dst);
-        if (plat_src == plat_dst) {
-            // Copy from same platform
-            platforms_[plat_src]->copy(dev_src, src, offset_src, dev_dst, dst, offset_dst, size);
-            debug("Copy between devices % and % on platform %", dev_src, dev_dst, plat_src);
-        } else {
-            // Copy from another platform
-            if (plat_src == 0) {
-                // Source is the CPU platform
-                platforms_[plat_dst]->copy_from_host(src, offset_src, dev_dst, dst, offset_dst, size);
-                debug("Copy from host to device % on platform %", dev_dst, plat_dst);
-            } else if (plat_dst == 0) {
-                // Destination is the CPU platform
-                platforms_[plat_src]->copy_to_host(dev_src, src, offset_src, dst, offset_dst, size);
-                debug("Copy to host from device % on platform %", dev_src, plat_src);
-            } else {
-                error("Cannot copy memory between different platforms");
-            }
-        }
-    }
+    void platform(PlatformId plat, Platform* test);
 
     bool profiling_enabled() { return profile_.first == ProfileLevel::Full; }
     bool dynamic_profiling_enabled() { return profile_.second == ProfileLevel::Fpga_dynamic; }
+    std::atomic<uint64_t>& kernel_time() { return kernel_time_; }
+
+    static void* aligned_malloc(size_t, size_t);
+    static void aligned_free(void*);
 
 private:
-    void check_device(PlatformId plat, DeviceId dev) {
-        assert((size_t)dev < platforms_[plat]->dev_count() && "Invalid device");
-        unused(plat, dev);
-    }
+    void check_device(PlatformId, DeviceId) const;
 
     std::pair<ProfileLevel, ProfileLevel> profile_;
-    std::vector<Platform*> platforms_;
+    std::atomic<uint64_t> kernel_time_;
+    std::vector<std::unique_ptr<Platform>> platforms_;
     std::unordered_map<std::string, std::string> files_;
 };
-
-Runtime& runtime();
 
 #endif

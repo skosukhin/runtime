@@ -4,6 +4,7 @@
 // AnyDSL runtime feature support
 
 #cmakedefine AnyDSL_runtime_BUILD_SHARED
+#cmakedefine AnyDSL_runtime_HAS_LLVM_SUPPORT
 #cmakedefine AnyDSL_runtime_HAS_JIT_SUPPORT
 #cmakedefine AnyDSL_runtime_HAS_CUDA_SUPPORT
 #cmakedefine AnyDSL_runtime_HAS_OPENCL_SUPPORT
@@ -12,36 +13,44 @@
 
 
 #if defined(AnyDSL_runtime_BUILD_SHARED)
+#  ifdef _MSC_VER
+#    define __dll_import __declspec(dllimport)
+#    define __dll_export __declspec(dllexport)
+#  else  // _MSC_VER
+#    define __dll_import __attribute__((visibility("default")))
+#    define __dll_export __attribute__((visibility("default")))
+#  endif // _MSC_VER
 #  ifdef AnyDSL_runtime_EXPORTS
-#    ifdef _MSC_VER
-#      define AnyDSL_runtime_API __declspec(dllexport)
-#    else  // _MSC_VER
-#      define AnyDSL_runtime_API __attribute__((visibility("default")))
-#    endif // _MSC_VER
+#    define AnyDSL_runtime_API __dll_export
 #  else  // AnyDSL_runtime_EXPORTS
-#    ifdef _MSC_VER
-#      define AnyDSL_runtime_API __declspec(dllimport)
-#    else  // _MSC_VER
-#      define AnyDSL_runtime_API __attribute__((visibility("default")))
-#    endif // _MSC_VER
+#    define AnyDSL_runtime_API __dll_import
 #  endif // AnyDSL_runtime_EXPORTS
+#  ifdef AnyDSL_runtime_jit_EXPORTS
+#    define AnyDSL_runtime_jit_API __dll_export
+#  else  // AnyDSL_runtime_jit_EXPORTS
+#    define AnyDSL_runtime_jit_API __dll_import
+#  endif // AnyDSL_runtime_jit_EXPORTS
 #else  // AnyDSL_runtime_BUILD_SHARED
 #  define AnyDSL_runtime_API
+#  define AnyDSL_runtime_jit_API
 #endif // AnyDSL_runtime_BUILD_SHARED
 
 
 // CUDA support
 
 #cmakedefine AnyDSL_runtime_CUDA_NVRTC
-#define AnyDSL_runtime_LIBDEVICE_DIR  "@AnyDSL_runtime_LIBDEVICE_DIR@/"
-#define AnyDSL_runtime_NVCC_BIN       "@AnyDSL_runtime_NVCC_BIN@"
-#define AnyDSL_runtime_NVCC_INC       "@AnyDSL_runtime_NVCC_INC@"
+#define AnyDSL_runtime_LIBDEVICE_DIR        "@AnyDSL_runtime_LIBDEVICE_DIR@/"
+#define AnyDSL_runtime_NVCC_BIN             "@AnyDSL_runtime_NVCC_BIN@"
+#define AnyDSL_runtime_NVCC_INC             "@AnyDSL_runtime_NVCC_INC@"
 
+// HSA support
+
+#define AnyDSL_runtime_HSA_BITCODE_PATH     "@AnyDSL_runtime_HSA_BITCODE_PATH@/"
+#define AnyDSL_runtime_HSA_BITCODE_SUFFIX   "@AnyDSL_runtime_HSA_BITCODE_SUFFIX@"
 
 // jit support
 
-#define AnyDSL_runtime_SOURCE_DIR     "@CMAKE_CURRENT_SOURCE_DIR@"
-#define AnyDSL_runtime_SOURCE_FILES   "@RUNTIME_IMPALA_SRCS@"
+#define AnyDSL_runtime_SOURCE_DIR           "@CMAKE_CURRENT_SOURCE_DIR@"
 
 
 #endif // ANYDSL_RUNTIME_CONFIG_H

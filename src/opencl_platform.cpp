@@ -1,6 +1,5 @@
 #include "opencl_platform.h"
 
-// TODO: get rid of this cyclic dependency
 #include "runtime.h"
 
 #include <algorithm>
@@ -16,12 +15,6 @@ static inline std::string remove_extension(const std::string& file_name, const s
     auto pos = file_name.rfind(ext);
     return pos != std::string::npos ? file_name.substr(0, pos) : file_name;
 }
-
-// factory method
-template<> template<>
-Platform* PlatformFactory<OpenCLPlatform>::create(Runtime* runtime, const std::string&) {
-    return new OpenCLPlatform(runtime);
-};
 
 static std::string get_opencl_error_code_str(int error) {
     #define CL_ERROR_CODE(CODE) case CODE: return #CODE;
@@ -216,14 +209,8 @@ OpenCLPlatform::OpenCLPlatform(Runtime* runtime)
             CHECK_OPENCL(err, "clGetDeviceInfo()");
 
             auto dev = devices_.size();
-            devices_.resize(dev + 1);
-            devices_[dev].platform = platform;
-            devices_[dev].dev = device;
+            devices_.emplace_back(this, platform, device, version_major, version_minor, platform_name, device_name);
 
-            devices_[dev].version_major = version_major;
-            devices_[dev].version_minor = version_minor;
-            devices_[dev].platform_name = platform_name;
-            devices_[dev].device_name = device_name;
             #ifdef CL_VERSION_2_0
             devices_[dev].svm_caps = svm_caps;
             #endif
@@ -350,78 +337,73 @@ void OpenCLPlatform::release(DeviceId dev, void* ptr) {
     CHECK_OPENCL(err, "clReleaseMemObject()");
 }
 
-extern std::atomic<uint64_t> anydsl_kernel_time;
-
 void time_kernel_callback(cl_event event, cl_int, void* data) {
-    OpenCLPlatform::DeviceData* dev = reinterpret_cast<OpenCLPlatform::DeviceData*>(data);
+    auto dev = reinterpret_cast<OpenCLPlatform::DeviceData*>(data);
     cl_ulong end, start;
     cl_int err = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, 0);
     err |= clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start, 0);
     CHECK_OPENCL(err, "clGetEventProfilingInfo()");
     cl_ulong time = (end - start) / 1000;
-    anydsl_kernel_time.fetch_add(time);
-    dev->timings_counter.fetch_sub(1);
+    dev->parent->runtime_->kernel_time().fetch_add(time);
+    dev->atomic_data.timings_counter.fetch_sub(1);
     err = clReleaseEvent(event);
     CHECK_OPENCL(err, "clReleaseEvent()");
 }
 
+void OpenCLPlatform::launch_kernel(DeviceId dev, const LaunchParams& launch_params) {
 
-void OpenCLPlatform::launch_kernel(DeviceId dev,
-                                   const char* file, const char* name,
-                                   const uint32_t* grid, const uint32_t* block,
-                                   void** args, const uint32_t* sizes, const uint32_t*, const uint32_t*, const KernelArgType* types,
-                                   uint32_t num_args) {
-
-    if (devices_[dev].is_intel_fpga && num_args == 0) {
+    if (devices_[dev].is_intel_fpga && launch_params.num_args == 0) {
         debug("processing by autorun kernel");
         return;
     }
 
-    auto kernel = load_kernel(dev, file, name);
+    auto kernel = load_kernel(dev, launch_params.file_name, launch_params.kernel_name);
 
     // set up arguments
-    std::vector<cl_mem> kernel_structs(num_args);
-    for (uint32_t i = 0; i < num_args; i++) {
-        if (types[i] == KernelArgType::Struct) {
+    std::vector<cl_mem> kernel_structs(launch_params.num_args);
+    for (uint32_t i = 0; i < launch_params.num_args; i++) {
+        if (launch_params.args.types[i] == KernelArgType::Struct) {
             // create a buffer for each structure argument
             cl_int err = CL_SUCCESS;
             cl_mem_flags flags = CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR;
-            cl_mem struct_buf = clCreateBuffer(devices_[dev].ctx, flags, sizes[i], args[i], &err);
+            cl_mem struct_buf = clCreateBuffer(devices_[dev].ctx, flags, launch_params.args.sizes[i], launch_params.args.data[i], &err);
             CHECK_OPENCL(err, "clCreateBuffer()");
             kernel_structs[i] = struct_buf;
             clSetKernelArg(kernel, i, sizeof(cl_mem), &kernel_structs[i]);
         } else {
             #ifdef CL_VERSION_2_0
-            if (types[i] == KernelArgType::Ptr && devices_[dev].version_major >= 2) {
-                cl_int err = clSetKernelArgSVMPointer(kernel, i, *(void**)args[i]);
+            if (launch_params.args.types[i] == KernelArgType::Ptr && devices_[dev].version_major >= 2) {
+                cl_int err = clSetKernelArgSVMPointer(kernel, i, *(void**)launch_params.args.data[i]);
                 CHECK_OPENCL(err, "clSetKernelArgSVMPointer()");
                 continue;
             }
             #endif
-            cl_int err = clSetKernelArg(kernel, i, types[i] == KernelArgType::Ptr ? sizeof(cl_mem) : sizes[i], args[i]);
+            cl_int err = clSetKernelArg(kernel, i,
+                launch_params.args.types[i] == KernelArgType::Ptr ? sizeof(cl_mem) : launch_params.args.sizes[i],
+                launch_params.args.data[i]);
             CHECK_OPENCL(err, "clSetKernelArg()");
         }
     }
 
-    size_t global_work_size[] = {grid [0], grid [1], grid [2]};
-    size_t local_work_size[]  = {block[0], block[1], block[2]};
+    size_t global_work_size[] = {launch_params.grid [0], launch_params.grid [1], launch_params.grid [2]};
+    size_t local_work_size[]  = {launch_params.block[0], launch_params.block[1], launch_params.block[2]};
     // launch the kernel
     cl_event event = 0;
     auto queue = devices_[dev].queue;
     if (devices_[dev].is_intel_fpga || devices_[dev].is_xilinx_fpga)
         queue = devices_[dev].kernels_queue[kernel];
 
-    if (devices_[dev].is_xilinx_fpga && (((block[1] == block[2]) == block[3]) == 1)) {
+    if (devices_[dev].is_xilinx_fpga && (((launch_params.block[0] == launch_params.block[1]) == launch_params.block[2]) == 1)) {
         cl_int err = clEnqueueTask(queue, kernel, 0, NULL, &event);
         CHECK_OPENCL(err, "clEnqueueTask()");
     } else {
-        cl_int err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global_work_size, local_work_size, 0, NULL, &event);
+        cl_int err = clEnqueueNDRangeKernel(queue, kernel, 3, NULL, global_work_size, local_work_size, 0, NULL, &event);
         CHECK_OPENCL(err, "clEnqueueNDRangeKernel()");
     }
 
     if (runtime_->profiling_enabled() && event) {
         cl_int err = clSetEventCallback(event, CL_COMPLETE, &time_kernel_callback, &devices_[dev]);
-        devices_[dev].timings_counter.fetch_add(1);
+        devices_[dev].atomic_data.timings_counter.fetch_add(1);
         CHECK_OPENCL(err, "clSetEventCallback()");
     } else {
         cl_int err = clReleaseEvent(event);
@@ -429,11 +411,12 @@ void OpenCLPlatform::launch_kernel(DeviceId dev,
     }
 
     if (runtime_->dynamic_profiling_enabled())
-        dynamic_profile(dev,file);
+        //dynamic_profile(dev,file);
+        dynamic_profile(dev,launch_params.file_name);
 
     // release temporary buffers for struct arguments
-    for (uint32_t i = 0; i < num_args; i++) {
-        if (types[i] == KernelArgType::Struct) {
+    for (uint32_t i = 0; i < launch_params.num_args; i++) {
+        if (launch_params.args.types[i] == KernelArgType::Struct) {
             cl_int err = clReleaseMemObject(kernel_structs[i]);
             CHECK_OPENCL(err, "clReleaseMemObject()");
         }
@@ -449,7 +432,9 @@ void OpenCLPlatform::synchronize(DeviceId dev) {
         }
     } else {
         cl_int err = clFinish(devices_[dev].queue);
-        while (runtime_->profiling_enabled() && devices_[dev].timings_counter.load() != 0) ;
+        // clFinish does not ensure that the callback has been called.
+        // We must thus add another layer of synchronization when profiling is enabled.
+        while (runtime_->profiling_enabled() && devices_[dev].atomic_data.timings_counter.load() != 0) ;
         CHECK_OPENCL(err, "clFinish()");
     }
 }
@@ -599,15 +584,16 @@ cl_program OpenCLPlatform::load_and_compile_kernel(DeviceId dev, const std::stri
        src_path = filename.substr(0, ext_pos) + ".aocx";
     else if (opencl_dev.is_xilinx_fpga)
         src_path = filename.substr(0, ext_pos) + ".xclbin";
-    std::string src_code = runtime().load_file(src_path);
+    std::string src_code = runtime_->load_file(src_path);
 
     // load and compile src or load and compile bin from cache/disk
     cl_program program;
-    std::string bin = (opencl_dev.is_intel_fpga || opencl_dev.is_xilinx_fpga) ? src_code : runtime().load_cache(devices_[dev].platform_name + devices_[dev].device_name + src_code);
+    std::string bin = (opencl_dev.is_intel_fpga || opencl_dev.is_xilinx_fpga) ? src_code
+        : runtime_->load_from_cache(devices_[dev].platform_name + devices_[dev].device_name + src_code);
     if (bin.empty()) {
         program = load_program_source(dev, src_path, src_code);
         program = compile_program(dev, program, src_path);
-        runtime().store_cache(devices_[dev].platform_name + devices_[dev].device_name + src_code, program_as_string(program));
+        runtime_->store_to_cache(devices_[dev].platform_name + devices_[dev].device_name + src_code, program_as_string(program));
     } else {
         program = load_program_binary(dev, src_path, bin);
         program = compile_program(dev, program, src_path);
@@ -661,4 +647,8 @@ cl_kernel OpenCLPlatform::load_kernel(DeviceId dev, const std::string& filename,
     opencl_dev.unlock();
 
     return kernel;
+}
+
+void register_opencl_platform(Runtime* runtime) {
+    runtime->register_platform<OpenCLPlatform>();
 }
